@@ -3,7 +3,6 @@
 #include <migraphx/check_context.hpp>
 #include <migraphx/adjust_allocation.hpp>
 #include <migraphx/dead_code_elimination.hpp>
-#include <migraphx/decompose.hpp>
 #include <migraphx/eliminate_allocation.hpp>
 #include <migraphx/eliminate_common_subexpression.hpp>
 #include <migraphx/eliminate_concat.hpp>
@@ -14,13 +13,14 @@
 #include <migraphx/memory_coloring.hpp>
 #include <migraphx/propagate_constant.hpp>
 #include <migraphx/register_target.hpp>
-#include <migraphx/remap.hpp>
 #include <migraphx/rewrite_batchnorm.hpp>
 #include <migraphx/rewrite_pooling.hpp>
+#include <migraphx/rewrite_quantization.hpp>
 #include <migraphx/rewrite_rnn.hpp>
 #include <migraphx/schedule.hpp>
 #include <migraphx/memory_coloring.hpp>
 #include <migraphx/simplify_algebra.hpp>
+#include <migraphx/simplify_qdq.hpp>
 #include <migraphx/simplify_reshapes.hpp>
 #include <migraphx/preallocate_param.hpp>
 #include <migraphx/cpu/fuse_ops.hpp>
@@ -46,9 +46,9 @@ std::vector<pass> target::get_passes(migraphx::context& gctx, const compile_opti
     std::set<shape::type_t> unsupported_types(shape::types().begin(), shape::types().end());
     unsupported_types.erase(shape::type_t::float_type);
     return {normalize_ops{},
-            eliminate_data_type{unsupported_types, shape::type_t::float_type},
+            rewrite_quantization{},
             dead_code_elimination{},
-            decompose{},
+            eliminate_data_type{unsupported_types, shape::type_t::float_type},
             dead_code_elimination{},
             simplify_reshapes{},
             eliminate_identity{},

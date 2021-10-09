@@ -27,7 +27,7 @@ std::future<typename std::result_of<Function()>::type> detach_async(Function&& f
         std::packaged_task<result_type()> task(std::forward<Function>(f));
         auto fut = task.get_future();
         std::thread(std::move(task)).detach();
-        return std::move(fut);
+        return fut;
     }
     return std::async(std::launch::deferred, std::forward<Function>(f));
 }
@@ -99,7 +99,9 @@ std::pair<migraphx::program, std::vector<migraphx::argument>> run_verify::run_ta
     for(auto&& x : p.get_parameter_shapes())
     {
         if(m.count(x.first) == 0)
+        {
             m[x.first] = t.allocate(x.second);
+        }
     }
     validate(t, p, m);
     p.eval(m);

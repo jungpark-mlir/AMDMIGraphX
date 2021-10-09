@@ -5,88 +5,12 @@
 #include <migraphx/gpu/device/launch.hpp>
 #include <migraphx/gpu/device/visit.hpp>
 #include <migraphx/gpu/device/multi_index.hpp>
+#include <migraphx/gpu/device/reduce_ops.hpp>
 
 namespace migraphx {
 inline namespace MIGRAPHX_INLINE_NS {
 namespace gpu {
 namespace device {
-
-#if __AMDGCN_WAVEFRONT_SIZE == 32
-#define MIGRAPHX_NO_DPP
-#endif
-
-struct sum
-{
-    template <class T, class U>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x, U y) const
-    {
-        return x + y;
-    }
-};
-
-struct product
-{
-    template <class T, class U>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x, U y) const
-    {
-        return x * y;
-    }
-};
-
-struct id
-{
-    template <class T>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x) const
-    {
-        return x;
-    }
-};
-
-struct mean
-{
-    size_t item_num = 1;
-    template <class T>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x) const
-    {
-        return x / static_cast<T>(item_num);
-    }
-};
-
-struct max
-{
-    template <class T, class U>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x, U y) const
-    {
-        return (x > y) ? x : y;
-    }
-};
-
-struct min
-{
-    template <class T, class U>
-    MIGRAPHX_DEVICE_CONSTEXPR auto operator()(T x, U y) const
-    {
-        return (x < y) ? x : y;
-    }
-};
-
-struct lowest
-{
-    template <class T>
-    __device__ __host__ operator T() const
-    {
-        return device_cast(std::numeric_limits<host_type<T>>::lowest());
-    }
-};
-
-struct highest
-{
-    template <class T>
-    __device__ __host__ operator T() const
-    {
-        return device_cast(std::numeric_limits<host_type<T>>::max());
-    }
-};
 
 #ifdef MIGRAPHX_NO_DPP
 template <index_int N,
@@ -170,10 +94,12 @@ __device__ void dpp_reduce(T& in, Op op)
     in  = op(in, out);
     out = dpp_mov<dpp_row_shr(8), 0xf, 0xc>(in);
     in  = op(in, out);
+#if __AMDGCN_WAVEFRONT_SIZE == 64
     out = dpp_mov<dpp_row_bcast(15), 0xa>(in);
     in  = op(in, out);
     out = dpp_mov<dpp_row_bcast(31), 0xc>(in);
     in  = op(in, out);
+#endif
 }
 
 __device__ inline void dpp_reduce(float& x, sum)
@@ -190,9 +116,11 @@ __device__ inline void dpp_reduce(float& x, sum)
                      "s_nop 1\n"
                      "v_add_f32 %0 %0 %0 row_shr:8 bank_mask:0xc\n"
                      "s_nop 1\n"
+#if __AMDGCN_WAVEFRONT_SIZE == 64
                      "v_add_f32 %0 %0 %0 row_bcast:15 row_mask:0xa\n"
                      "s_nop 1\n"
                      "v_add_f32 %0 %0 %0 row_bcast:31 row_mask:0xc\n"
+#endif
                      "s_nop 1\n"
                      : "=v"(x)
                      : "0"(x));
@@ -207,21 +135,27 @@ template <index_int N,
           MIGRAPHX_REQUIRES(not std::is_integral<ForStride>{})>
 __device__ auto block_reduce(index idx, Op op, T init, ForStride fs, F f)
 {
-    using type = decltype(f(deduce_for_stride(fs)));
-    MIGRAPHX_DEVICE_SHARED type buffer[N / 64];
+
+#if __AMDGCN_WAVEFRONT_SIZE == 32
+    constexpr index_int nthreads = 16;
+#else
+    constexpr index_int nthreads = 64;
+#endif
+    using type                   = decltype(f(deduce_for_stride(fs)));
+    MIGRAPHX_DEVICE_SHARED type buffer[N / nthreads];
     type x = init;
     fs([&](auto i) { x = op(x, f(i)); });
     dpp_reduce(x, op);
 
-    const auto ldsidx = idx.local / 64;
-    if((idx.local % 64) == 63)
+    const auto ldsidx = idx.local / nthreads;
+    if((idx.local % nthreads) == nthreads - 1)
     {
         buffer[ldsidx] = x;
     }
     __syncthreads();
 
     type y = init;
-    for(index_int i = 0; i < idx.nlocal() / 64; i++)
+    for(index_int i = 0; i < idx.nlocal() / nthreads; i++)
     {
         y = op(y, buffer[i]);
     }
