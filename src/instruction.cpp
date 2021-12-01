@@ -321,6 +321,25 @@ void instruction::finalize(context& ctx)
         this->op.finalize(ctx, this->get_shape(), to_shapes(this->inputs()));
 }
 
+template<class T>
+void print_vec(std::ostream& os, const std::vector<T>& vec)
+{
+    char delim = '{';
+    for(auto& v : vec)
+    {
+        os << delim << v;
+        delim = ',';
+    }
+    os << '}';
+}
+
+template<class T>
+std::ostream& operator << (std::ostream& os, const std::vector<T>& vec)
+{
+    print_vec(os, vec);
+    return os;
+}
+
 void instruction::print(std::ostream& os,
                         instruction_ref ins,
                         const std::unordered_map<instruction_ref, std::string>& names)
@@ -344,6 +363,10 @@ void instruction::print(std::ostream& os,
         {
             std::string arg_name = contains(names, arg) ? names.at(arg) : "?";
             os << delim << arg_name;
+            if(ins->name() == "gpu::gemm")
+            {
+                os << ' ' << arg->get_shape().lens();
+            }
             delim = ',';
         }
         os << ")";
