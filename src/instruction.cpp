@@ -321,7 +321,7 @@ void instruction::finalize(context& ctx)
         this->op.finalize(ctx, this->get_shape(), to_shapes(this->inputs()));
 }
 
-template<class T>
+template <class T>
 void print_vec(std::ostream& os, const std::vector<T>& vec)
 {
     char delim = '{';
@@ -333,8 +333,8 @@ void print_vec(std::ostream& os, const std::vector<T>& vec)
     os << '}';
 }
 
-template<class T>
-std::ostream& operator << (std::ostream& os, const std::vector<T>& vec)
+template <class T>
+std::ostream& operator<<(std::ostream& os, const std::vector<T>& vec)
 {
     print_vec(os, vec);
     return os;
