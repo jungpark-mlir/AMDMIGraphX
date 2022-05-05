@@ -1,26 +1,3 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2015-2022 Advanced Micro Devices, Inc. All rights reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
 #ifndef MIGRAPHX_GUARD_RTGLIB_MATCHER_HPP
 #define MIGRAPHX_GUARD_RTGLIB_MATCHER_HPP
 
@@ -179,19 +156,6 @@ struct id_matcher
     }
 };
 
-// Forward declare class and constructors
-template <class M>
-struct basic_matcher;
-
-template <class M>
-basic_matcher<M> make_basic_matcher(M m);
-
-template <class F>
-basic_matcher<function_matcher<F>> make_basic_fun_matcher(F f);
-
-template <class P>
-basic_matcher<predicate_matcher<P>> make_basic_pred_matcher(P p);
-
 /// The basic matcher provides the all_of composability of the matcher
 template <class M>
 struct basic_matcher
@@ -203,8 +167,8 @@ struct basic_matcher
     {
         // Copy m because we cant capture `this` by value
         auto mm = m;
-        return make_basic_fun_matcher([=](matcher_context& ctx,
-                                          instruction_ref ins) -> optional<instruction_ref> {
+        return make_bf_matcher([=](matcher_context& ctx,
+                                   instruction_ref ins) -> optional<instruction_ref> {
             auto result = mm.match(ctx, ins);
             if(result)
             {
@@ -275,39 +239,7 @@ struct any_matcher : any_matcher_base
 
 struct matcher_result
 {
-    struct instruction_container
-    {
-        instruction_container() = default;
-        instruction_container(std::unordered_map<std::string, instruction_ref> x)
-            : ins_map(std::move(x))
-        {
-        }
-
-        instruction_ref operator[](const std::string& name) const
-        {
-            auto it = ins_map.find(name);
-            if(it == ins_map.end())
-                MIGRAPHX_THROW("Accessing name that wasn't bound in matcher: " + name);
-            return it->second;
-        }
-
-        auto find(const std::string& name) const { return ins_map.find(name); }
-
-        auto begin() const { return ins_map.cbegin(); }
-
-        auto end() const { return ins_map.cend(); }
-
-        bool has_instructions_in(const module& mod) const
-        {
-            return std::all_of(ins_map.begin(), ins_map.end(), [&](auto&& p) {
-                return mod.has_instruction(p.second);
-            });
-        }
-
-        private:
-        std::unordered_map<std::string, instruction_ref> ins_map;
-    };
-    instruction_container instructions;
+    std::unordered_map<std::string, instruction_ref> instructions;
     instruction_ref result;
 };
 
@@ -323,7 +255,6 @@ matcher_result match_instruction(module& mod, instruction_ref ins, M&& m)
     {
         result.result       = ins;
         result.instructions = ctx.instructions;
-        assert(result.instructions.has_instructions_in(mod));
     }
     else
     {
@@ -349,27 +280,27 @@ match::matcher_result find_match(module& modl, M&& m)
 MIGRAPHX_DECLARE_ENV_VAR(MIGRAPHX_TRACE_MATCHES)
 
 /// Find matches for an instruction in the module
-template <class Mod, class... Ms>
-void find_matches(Mod& mod, instruction_ref ins, Ms&&... ms)
+template <class... Ms>
+void find_matches(module& mod, instruction_ref ins, Ms&&... ms)
 {
 #if !defined(__GNUC__) || defined(__clang__) || __GNUC__ > 5
     const
 #endif
         int trace = value_of(MIGRAPHX_TRACE_MATCHES{});
-    bool match    = false;
+    bool match     = false;
     each_args(
         [&](auto&& m) {
             if(match)
                 return;
             if(trace > 1)
                 std::cout << "Match: " << get_type_name(m) << std::endl;
-            auto r = match_instruction(get_module(mod), ins, m.matcher());
-            if(r.result == get_module(mod).end())
+            auto r = match_instruction(mod, ins, m.matcher());
+            if(r.result == mod.end())
                 return;
             if(trace > 0)
             {
                 std::cout << "Matched by " << get_type_name(m) << std::endl;
-                get_module(mod).debug_print(ins);
+                mod.debug_print(ins);
             }
             m.apply(mod, r);
             match = true;
@@ -378,10 +309,10 @@ void find_matches(Mod& mod, instruction_ref ins, Ms&&... ms)
 }
 
 /// Find matches in a module
-template <class Mod, class... Ms>
-void find_matches(Mod& mod, Ms&&... ms)
+template <class... Ms>
+void find_matches(module& mod, Ms&&... ms)
 {
-    for(auto ins : iterator_for(get_module(mod)))
+    for(auto ins : iterator_for(mod))
     {
         find_matches(mod, ins, ms...);
     }
@@ -604,18 +535,6 @@ auto skip_output(Ms... ms)
     });
 }
 
-inline auto var(std::string s)
-{
-    return make_basic_fun_matcher(
-        [=, s = std::move(s)](const matcher_context& ctx,
-                              instruction_ref) -> optional<instruction_ref> {
-            auto it = ctx.instructions.find(s);
-            if(it == ctx.instructions.end())
-                return nullopt;
-            return it->second;
-        });
-}
-
 inline auto name(std::string s)
 {
     return make_basic_pred_matcher(
@@ -779,16 +698,10 @@ auto skip_broadcasts(Ms... ms)
     return skip(name("broadcast", "multibroadcast", "contiguous"))(ms...);
 }
 
-template <class... Ms>
-auto skip_broadcasts_converts(Ms... ms)
-{
-    return skip(name("broadcast", "multibroadcast", "contiguous", "convert"))(ms...);
-}
-
 template <class T>
 inline auto has_value(T x, float tolerance = 1e-6)
 {
-    return skip_broadcasts_converts(make_basic_pred_matcher([=](instruction_ref ins) {
+    return skip_broadcasts(make_basic_pred_matcher([=](instruction_ref ins) {
         if(ins->name() != "@literal")
             return false;
         auto l = ins->get_literal();
