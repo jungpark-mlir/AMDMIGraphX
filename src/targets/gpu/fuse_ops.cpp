@@ -1021,6 +1021,7 @@ struct find_contiguous
             ins->inputs());
     }
 };
+}
 
 struct find_contiguous_pointwise
 {
