@@ -64,7 +64,7 @@ namespace {
 struct find_conv_pointwise
 {
     // Find a convolution followed by a pointwise operation.
-    auto matcher() const // NOLINT
+    auto matcher() const
     {
         auto convolution =
             match::skip(match::name("contiguous"))(match::name("convolution").bind("convolution"));
